@@ -1,6 +1,4 @@
 import os
-import threading
-import concurrent.futures
 import magic
 import pandas as pd
 from collections import Counter
@@ -11,55 +9,13 @@ import nest_asyncio
 from tqdm import tqdm
 import sys
 from sklearn.model_selection import train_test_split
-from sklearn.tree import DecisionTreeClassifier
-from sklearn.ensemble import BaggingClassifier
-from sklearn.metrics import accuracy_score
+from sklearn.metrics import accuracy_score, precision_recall_fscore_support
 import numpy as np
 from tqdm import tqdm
 import pickle
 
 
-
 FLOW = {}
-
-def make_csv(filepath, savepath):
-  """
-  Extracts the featues and generates a csv by invoking tshark
-
-  Args:
-    filepath: File path of pcap data to filter
-    savepath: Path of directory where to save file
-
-  Returns:
-    None: generates a filename.csv
-  """
-  command = "tshark -r {0} -T fields -e ip.src -e ip.dst -e _ws.col.Protocol -e ip.len -e frame.time_relative -e frame.time_delta -e tcp.srcport -e tcp.dstport -e udp.srcport -e udp.dstport -E separator=, -E header=y > {1}" 
-  base_name = os.path.basename(filepath)
-  save_file_name = os.path.splitext(base_name)[0]+'.csv'
-  save_file = os.path.join( savepath, save_file_name )
-  os.system(command.format(filepath, save_file))
-  print("EXTRACTED features from {}".format(filepath))
-
-def get_pcaps(base_path):
-  """
-  returns a list of paths to pcap files from the base file
-  
-  Args:
-    base_path: path to be searched for pcap files
-  
-  Returns:
-    pcap_list: list of relative paths from the base_path to pcap files
-  """
-  pcap_list = []
-  for path, dir, files in os.walk(base_path):
-    for file in files:
-      file_name = os.path.join(path, file)
-      magic_mime = magic.from_file(file_name, mime=True)
-      if magic_mime == 'application/vnd.tcpdump.pcap' or magic_mime == 'application/octet-stream':
-        # vnd.tcpdump.pcap for pcap and octet-stream for pcapng
-        pcap_list.append(file_name)
-  return pcap_list
-
 
 def byte_entropy(labels):
   ent = stats.entropy(list(Counter(labels).values()), base=2)
@@ -70,13 +26,7 @@ def byte_entropy(labels):
 
 
 class HostInfo:
-  """
-  Class to contain the desired features of a particular host
-  """
   def __init__(self, ipv4_address):
-    """
-    Initialize the host with its IPv4
-    """
     self.ip = ipv4_address # string (can be converted to 32 bit int if needed)
     self.src_ports = set()  #list of host ports i.e the ports where it serves as source
     self.dst_ports = set() # list of dest ports i.e the ports where it serves as destination
@@ -93,22 +43,13 @@ class HostInfo:
     self.total_packets = 0
 
   def ipv4_to_int(ip_addr):
-    """
-    takes an ipv4 address and converts it to 32 bit int
-    """
     vals = map(int, ip_addr.split('.'))
     return sum(x*256**y for x,y in zip(vals,(3,2,1,0)))
 
   def __repr__(self):
-    """
-    string representation, consisting of ipv4 address
-    """
     return self.ip
 
   def __hash__(self):
-    """
-    Making the class hashable to store in dictionary
-    """
     return hash(repr(self))
 
   def process_packet(self, packet):
@@ -172,15 +113,6 @@ class HostInfo:
 
 
 def min_none(a,b):
-  """
-  Min(a,b), returns the other element if either of `a` or `b` is None
-
-  Args:
-      a: int or float value
-      b: int or float value
-  Returns:
-      minimum of a or b
-  """
   if not a:
     return b
   if not b:
@@ -188,16 +120,6 @@ def min_none(a,b):
   return min(a,b)
 
 def max_none(a,b):
-  """
-  Min(a,b), returns the other element if either of `a` or `b` is None
-
-  Args:
-      a: int or float value
-      b: int or float value
-  Returns:
-      minimum of a or b
-  """
- 
   if not a:
     return b
   if not b:
@@ -269,8 +191,7 @@ class Flow:
       self.incoming_outgoing_ratio = self.recv_data/self.sent_data
     else:
       self.incoming_outgoing_ratio = self.recv_data
-
-  
+    
   def to_csv(self):
     return "{0},{1},{2},{3},{4},{5},{6},{7},{8},{9},{10},{11},{12},{13},{14},{15},{16},{17},{18},{19},{20},{21},{22},{23},{24},{25}\n".format(
       self.src_ip, 
@@ -302,9 +223,6 @@ class Flow:
       )
 
 def process_payload(data, is_hex=True):
-  """
-  returns size and normalized entropy for the hex data
-  """
   if is_hex:
     payload_bytes = bytes.fromhex("".join(data.split(":")))
   else:
@@ -314,12 +232,6 @@ def process_payload(data, is_hex=True):
   return payload_size, payload_entropy
 
 def process_packet(packet):
-  """
-  Collects info and fills in the respective class from the packet
-
-  Args:
-    packet: pyshark packet
-  """
   highest_layer = packet.highest_layer
   packet_type = packet.transport_layer
   layer_names = list(map(lambda x: x.layer_name, packet.layers))
@@ -401,50 +313,6 @@ def get_num_packets(path):
   data = os.popen(command.format(path)).read()
   return int(data.strip())
 
-def packet_types(path):
-  nest_asyncio.apply()
-  capture_dump = pyshark.FileCapture(path)
-  capture_dump.keep_packets = False ##very memory consuming, very important
-  packet_types = {}
-  packet_list = []
-  count = 0 
-  while True:
-    try:
-      packet = capture_dump.next()
-      if packet.highest_layer not in packet_types:
-        packet_list.append(packet)
-      packet_types[packet.highest_layer] = packet_types.get(packet.highest_layer,0) + 1
-      count +=1
-      if count == 30000:
-        break
-    except StopIteration:
-      break
-  for packet in packet_list:
-    print(packet.layers, packet_types[packet.highest_layer])
-  return packet_list
-
-def get_ips(path):
-  nest_asyncio.apply()
-  capture_dump = pyshark.FileCapture(path)
-  capture_dump.keep_packets = False ##very memory consuming, very important
-  ips = {}
-  count = 0
-  while True:
-    try:
-      packet = capture_dump.next()
-      if packet.transport_layer:
-        src_ip = packet.ip.src
-        dst_ip = packet.ip.dst
-        ips[src_ip] = ips.get(src_ip,0)+1
-      count += 1
-      if count == 50000:
-        break
-    except StopIteration:
-      break
-  sorted_dict = sorted(ips.items(), key = lambda x: x[1], reverse=True)
-  for a,b in sorted_dict:
-    print(a,b)
-
 
 def filter_data(pcap_path, ip_list, csv_path, label=0):
   num_packets = get_num_packets(pcap_path)
@@ -514,7 +382,7 @@ def detection(pcap_path, csv_path):
   filter_data(pcap_path,[],csv_path)
   df = pd.read_csv(csv_path)
   features = clean_dataset(df[df.columns[5:-1]])
-  model_name = "trained_model.pickle"
+  model_name = "extracted_feature.csv"
   with open(model_name,'rb') as model_file:
     model = pickle.load(model_file)
   flows = df[df.columns[0:5]]
@@ -533,72 +401,7 @@ def main(pcap_path, csv_path,output_path):
   clean(a,b,c,output_path)
 
 
-
-
-def train(model_name):
-  p2pbox1_ip = ["192.168.1.2"]
-  p2pbox2_ip = ["192.168.2.2"]
-  torrent_ip = ["172.27.28.106"]
-  storm_ip = ["66.154.80.101","66.154.80.105","66.154.80.111","66.154.80.125","66.154.83.107","66.154.83.113","66.154.83.138","66.154.83.80","66.154.87.39","66.154.87.41","66.154.87.57","66.154.87.58","66.154.87.61"]
-  vinchua_ip = ["172.27.22.206"]
-  zeus_ip = ["10.0.2.15"]
-  p2pbox1_pcaps = get_pcaps("Botnet_Detection_Dataset/Benign/p2pbox1")
-  p2pbox2_pcaps = get_pcaps("Botnet_Detection_Dataset/Benign/p2pbox2")
-  torrent_pcaps = get_pcaps("Botnet_Detection_Dataset/Benign/torrent")
-  storm_pcaps = get_pcaps("Botnet_Detection_Dataset/Botnet/storm")
-  vinchua_pcaps = get_pcaps("Botnet_Detection_Dataset/Botnet/vinchuca")
-  zeus_pcaps = get_pcaps("Botnet_Detection_Dataset/Botnet/zeus")
-
-  files_benign = p2pbox1_pcaps+p2pbox2_pcaps+torrent_pcaps
-  files_botnet = storm_pcaps+vinchua_pcaps+zeus_pcaps
-
-
-  if not os.path.exists("filtered_data"):
-    os.mkdir("filtered_data")
-
-  for file in files_botnet:
-    base_name = os.path.basename(file)
-    filter_data(file, [], os.path.join("filtered_data", base_name+".csv"), label=1)
-    FLOW.clear()
-
-  for file in files_benign:
-    base_name = os.path.basename(file)
-    filter_data(file, [], os.path.join("filtered_data", base_name+".csv"), label=0)
-    FLOW.clear()
-
-  df_all = None
-  for file in tqdm(os.listdir("filtered_data"), ascii=False):
-    df = pd.read_csv(os.path.join("filtered_data",file))
-    if 'label' not in df.columns:
-      print(file)
-    if type(df_all) == type(None):
-      df_all = df
-    else:
-      df_all = df_all.append(df, ignore_index = True)
-
-  with open('training.csv','w') as out_csv:
-    out_csv.write(df_all.to_csv(index = False))
-
-
-  features = clean_dataset(df1[df1.columns[5:-1]])
-  flows = df1[df1.columns[0:5]]
-  y = df1['label']
-  X_train, X_test, y_train, y_test = train_test_split(features, y, test_size=0.2)
-  dtc = DecisionTreeClassifier()
-  bag=BaggingClassifier(base_estimator=dtc, n_estimators=100, bootstrap=True)
-  bag.fit(X_train, y_train) # Fit the model using train data
-  print(bag.score(X_test,y_test)) # Get the accuracy of test data
-  print(precision_recall_fscore_support(bag.predict(X_test),y_test))
-  with open(model_name,'wb') as model_file:
-    pickle.dump(bag, model_file)
-
-
 if __name__ == "__main__":
-  USAGE_INFO="""
-  detection: usage python3 botnetdetect.py <path to pcap>
-  training: usage python3 train <name of model to save>   (NOTE: running directory must contain Botnet_Detection_Dataset )
-  output stored in "output.txt"
-  """
 
   if len(sys.argv)==2:
     if os.path.exists(sys.argv[1]):
@@ -608,17 +411,7 @@ if __name__ == "__main__":
 
     else:
       print("file not found")
-      print(USAGE_INFO)
-      exit(1)
-
-  elif len(sys.argv)==3:
-    if sys.argv[1]=="train":
-      model_name = sys.argv[2]
-      train(model_name)
-    else:
-      print(USAGE_INFO)
       exit(1)
 
   else:
-    print(USAGE_INFO)
     exit(1)
