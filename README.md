@@ -25,7 +25,7 @@ This is the main program responsible for detecting botnets and training the Mach
 
 Botnet detection works on a pre-captured pcap file:
 
-`python3 botnetdetect.py <path to pcap file>`
+`python3 botnet-detect.py <path to pcap file>`
 
 Processes pcap file to produce `extracted_features.csv` which contains the features extracted from the pcap
 > NOTE: feature extraction is slow depending upon the size of input pcap (approx 1 minute to process 10MB)
@@ -35,16 +35,11 @@ results are stored in `output.txt`
 Analysis of more than one pcap files yet to be done, although the functionality has been written.  
 
 ##### Train model
-`python3 botnetdetect.py train model_name`
+`python3 botnet_train.py train model_name`
 > Assumption: The current directory contains training data in directory `Botnet_Detection_Dataset`
 
 Generates filtered csv files in `filtered_data` directory in current working directory
-
-The training phase is very very slow given the feature extraction from pcap files is done with pyshark.  
-The parsing speed is around 10MB/minute (yet to be improved).
-
-Alternatively, training can be done on a prefiltered `training.csv` by running the command  
-`python3 botnetdetect.py no-filter-train <csv/for/training> model_name`
+All the csv files will be further collected in a `training.csv`
 
 #### Result format
 The results are stored in `output.txt`  
